@@ -1,0 +1,49 @@
+classDiagram
+    class Owner {
+        +String id
+        +String name
+        +String email
+        +List~Pet~ pets
+        +add_pet(pet: Pet) void
+        +remove_pet(pet_id: String) void
+    }
+
+    class Pet {
+        +String id
+        +String name
+        +String species
+        +int age
+        +String special_notes
+        +update_profile(name: String, species: String, age: int, special_notes: String) void
+    }
+
+    class Task {
+        +String id
+        +String pet_id
+        +String title
+        +int duration_minutes
+        +int priority
+        +String preferred_window
+        +bool is_recurring
+        +update_task_details(title: String, duration_minutes: int, priority: int, preferred_window: String, is_recurring: bool) void
+    }
+
+    class ScheduleItem {
+        +Task task
+        +String start_time
+        +String end_time
+        +String status
+        +mark_complete() void
+        +mark_skipped() void
+    }
+
+    class Scheduler {
+        +List~String~ available_hours
+        +generate_daily_plan(tasks: List~Task~) List~ScheduleItem~
+        +resolve_conflicts(items: List~ScheduleItem~) List~ScheduleItem~
+    }
+
+    Owner "1" --> "0..*" Pet : owns
+    Pet "1" --> "0..*" Task : has
+    Scheduler "1" --> "0..*" ScheduleItem : generates
+    ScheduleItem "1" --> "1" Task : references
