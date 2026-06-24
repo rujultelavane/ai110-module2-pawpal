@@ -2,10 +2,14 @@
 
 ## 1. System Design
 
+Three core actions a user should be able to perform are to enter owner/pet info, add and edit tasks to do, and generate a plan depending on constraints and priorities. 
+
 **a. Initial design**
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
+
+The classes I chose were Owner, Pet, Task, ScheduleItem, Owner, and Scheduler. The responsibilities of Owner are having an id, name, and email, a list of pets, and adding and removing pets. The responsibilities of Pet are to hold data about it (id, name, species, age), get special edge cases with special_notes, and have a way to modify it with update_profile. Task links itself to a specific pet using pet_id, defines the scheduling rules/constraints for the algorithm, and allows editing these configuration constraints. ScheduleTask implements Task, and binds it with a start and end time and state-changing methods (complete/skipped). Scheduler keeps track of the global constraints for the day via available_hours, creates the schedule, and fixes any conflicts.
 
 **b. Design changes**
 
