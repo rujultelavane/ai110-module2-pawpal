@@ -79,14 +79,16 @@ Sample test output:
 
 ## 📐 Smarter Scheduling
 
-> Fill in once you've implemented scheduling logic.
-
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
-| Task sorting | | e.g., by priority, duration |
-| Filtering | | e.g., skip tasks if time runs out |
-| Conflict handling | | e.g., overlapping time slots |
-| Recurring tasks | | e.g., daily vs. weekly |
+| Task sorting | `Scheduler.generate_daily_plan()` | Tasks with a preferred time window are sorted before open tasks; within each group, lower priority number wins. Ties in start time inside `resolve_conflicts` are broken the same way. |
+| Filter by pet | `Owner.get_tasks_by_pet(pet_name)` | Returns every unscheduled task for a single pet (case-insensitive). Pass the result directly to `generate_daily_plan(tasks=...)` to plan for one pet at a time. |
+| Filter by status or pet | `Scheduler.filter_schedule(items, status, pet_name)` | Filters an existing plan by `ScheduleStatus` (PENDING / COMPLETE / SKIPPED) and/or pet name. Both parameters are optional and compose — e.g., Buddy's pending tasks only. |
+| Conflict detection | `Scheduler.detect_conflicts(items)` | Returns a list of `Conflict` objects for every overlapping pair, covering same-pet and cross-pet overlaps. Each `Conflict` carries `same_pet: bool` and a `describe()` string. |
+| Conflict warnings | `Scheduler.warn_on_conflicts(items)` | Lightweight alternative to `detect_conflicts` — returns `List[str]` warnings and never raises. Malformed items (e.g., `None` start time) produce a `"could not check pair"` warning instead of crashing. |
+| Conflict resolution | `Scheduler.resolve_conflicts(items)` | Keeps the higher-priority item when two items overlap; the loser is marked `SKIPPED`. Pre-existing skipped items bypass placement and are appended at the end. `_find_overlap` exits early once sorted order guarantees no further overlap. |
+| Recurring tasks | `Task.next_occurrence(new_id)` | Returns an identical copy of the task with a fresh id and `pet=None`. Only callable when `task.recurrence` is `"daily"` or `"weekly"`; raises `ValueError` otherwise. |
+| Complete + auto-requeue | `Scheduler.complete_item(item, new_task_id)` | Marks a schedule item complete and, if the task is recurring, calls `next_occurrence` and re-registers the new copy with the pet via `pet.add_task`. Returns the new task, or `None` for one-off tasks. |
 
 ## 📸 Demo Walkthrough
 

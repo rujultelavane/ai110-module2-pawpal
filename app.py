@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import time
-from pawpal_system import Owner, Pet, Task, TimeWindow, Scheduler, ScheduleStatus
+from pawpal_system import Conflict, Owner, Pet, Task, TimeWindow, Scheduler, ScheduleStatus
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 

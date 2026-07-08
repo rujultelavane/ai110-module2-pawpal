@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import time
 from enum import Enum
 from typing import Dict, List, Optional
@@ -10,10 +10,12 @@ from typing import Dict, List, Optional
 # ---------------------------------------------------------------------------
 
 def _to_minutes(t: time) -> int:
+    """Convert a time object to minutes since midnight."""
     return t.hour * 60 + t.minute
 
 
 def _to_time(minutes: int) -> time:
+    """Convert minutes since midnight back to a time object."""
     return time(minutes // 60, minutes % 60)
 
 
@@ -87,7 +89,8 @@ class Task:
     priority: int               # 1 = highest priority
     preferred_window: Optional[TimeWindow] = None
     is_recurring: bool = False
-    pet: Optional[Pet] = None  # attached at scheduling time
+    recurrence: Optional[str] = None   # "daily", "weekly", or None
+    pet: Optional[Pet] = None          # attached at scheduling time
 
     def update_task_details(
         self,
@@ -96,6 +99,7 @@ class Task:
         priority: int,
         preferred_window: Optional[TimeWindow],
         is_recurring: bool,
+        recurrence: Optional[str] = None,
     ) -> None:
         """Overwrite all editable task fields in one call."""
         self.title = title
@@ -103,6 +107,16 @@ class Task:
         self.priority = priority
         self.preferred_window = preferred_window
         self.is_recurring = is_recurring
+        self.recurrence = recurrence
+
+    def next_occurrence(self, new_id: str) -> "Task":
+        """Return a fresh, unscheduled copy of this task for its next recurrence cycle.
+
+        Raises ValueError if this task has no recurrence set.
+        """
+        if self.recurrence is None:
+            raise ValueError(f"Task '{self.title}' is not a recurring task.")
+        return replace(self, id=new_id, pet=None)
 
 
 @dataclass
@@ -119,6 +133,24 @@ class ScheduleItem:
     def mark_skipped(self) -> None:
         """Mark this item as intentionally skipped."""
         self.status = ScheduleStatus.SKIPPED
+
+
+@dataclass
+class Conflict:
+    item_a: ScheduleItem
+    item_b: ScheduleItem
+    same_pet: bool   # True when both tasks belong to the same pet
+
+    def describe(self) -> str:
+        """Return a human-readable summary of the conflict."""
+        a, b = self.item_a, self.item_b
+        who = "same pet" if self.same_pet else "different pets"
+        return (
+            f"CONFLICT ({who}): "
+            f"'{a.task.title}' ({a.start_time.strftime('%I:%M %p')}–{a.end_time.strftime('%I:%M %p')}) "
+            f"overlaps "
+            f"'{b.task.title}' ({b.start_time.strftime('%I:%M %p')}–{b.end_time.strftime('%I:%M %p')})"
+        )
 
 
 @dataclass
@@ -145,6 +177,15 @@ class Owner:
                 task.pet = pet
             tasks.extend(pet.tasks)
         return tasks
+
+    def get_tasks_by_pet(self, pet_name: str) -> List[Task]:
+        """Return all tasks for the pet matching pet_name (case-insensitive); empty list if not found."""
+        for pet in self.pets:
+            if pet.name.lower() == pet_name.lower():
+                for task in pet.tasks:
+                    task.pet = pet
+                return list(pet.tasks)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -214,32 +255,106 @@ class Scheduler:
 
         return None  # no slot found across any window
 
+    def filter_schedule(
+        self,
+        items: List[ScheduleItem],
+        status: Optional[ScheduleStatus] = None,
+        pet_name: Optional[str] = None,
+    ) -> List[ScheduleItem]:
+        """Return schedule items matching status and/or pet_name; both filters are optional and combinable."""
+        result = items
+        if status is not None:
+            result = [item for item in result if item.status == status]
+        if pet_name is not None:
+            result = [
+                item for item in result
+                if item.task.pet is not None
+                and item.task.pet.name.lower() == pet_name.lower()
+            ]
+        return result
+
+    def detect_conflicts(self, items: List[ScheduleItem]) -> List[Conflict]:
+        """Return every pair of non-skipped items whose time windows overlap.
+
+        Checks both same-pet and cross-pet overlaps — an owner cannot perform
+        two tasks simultaneously regardless of which pet they belong to.
+        """
+        active = [i for i in items if i.status != ScheduleStatus.SKIPPED]
+        conflicts: List[Conflict] = []
+        for i in range(len(active)):
+            for j in range(i + 1, len(active)):
+                a, b = active[i], active[j]
+                if _to_minutes(a.start_time) < _to_minutes(b.end_time) and \
+                   _to_minutes(b.start_time) < _to_minutes(a.end_time):
+                    conflicts.append(Conflict(
+                        item_a=a,
+                        item_b=b,
+                        same_pet=a.task.pet_id == b.task.pet_id,
+                    ))
+        return conflicts
+
+    def warn_on_conflicts(self, items: List[ScheduleItem]) -> List[str]:
+        """Return human-readable warning strings for every detected conflict.
+
+        Never raises — malformed items produce a 'could not check' warning
+        instead of crashing the caller.
+        """
+        warnings: List[str] = []
+        active = [i for i in items if i.status != ScheduleStatus.SKIPPED]
+        for i in range(len(active)):
+            for j in range(i + 1, len(active)):
+                a, b = active[i], active[j]
+                try:
+                    if _to_minutes(a.start_time) < _to_minutes(b.end_time) and \
+                       _to_minutes(b.start_time) < _to_minutes(a.end_time):
+                        same_pet = a.task.pet_id == b.task.pet_id
+                        who = "same pet" if same_pet else "different pets"
+                        warnings.append(
+                            f"WARNING ({who}): '{a.task.title}' and '{b.task.title}' overlap"
+                        )
+                except Exception as exc:
+                    warnings.append(
+                        f"WARNING: could not check pair "
+                        f"(item {i}, item {j}) — {exc}"
+                    )
+        return warnings
+
+    def complete_item(self, item: ScheduleItem, new_task_id: str) -> Optional[Task]:
+        """Mark item complete and, if recurring, register the next occurrence with the pet.
+
+        Returns the newly created Task for daily/weekly tasks, or None for one-off tasks.
+        """
+        item.mark_complete()
+        task = item.task
+        if task.recurrence is None:
+            return None
+        next_task = task.next_occurrence(new_task_id)
+        if task.pet is not None:
+            task.pet.add_task(next_task)
+        return next_task
+
     def resolve_conflicts(self, items: List[ScheduleItem]) -> List[ScheduleItem]:
         """Keep the higher-priority item when two items overlap; losers are marked SKIPPED."""
-        # Sort by start time; ties broken by priority so higher-priority lands first
+        # Pre-skipped items bypass placement logic and are reunited at the end.
+        pending = [i for i in items if i.status != ScheduleStatus.SKIPPED]
+        already_skipped = [i for i in items if i.status == ScheduleStatus.SKIPPED]
+
         ordered = sorted(
-            items,
+            pending,
             key=lambda s: (_to_minutes(s.start_time), s.task.priority),
         )
 
         accepted: List[ScheduleItem] = []
         for candidate in ordered:
-            if candidate.status == ScheduleStatus.SKIPPED:
-                accepted.append(candidate)
-                continue
+            overlap = self._find_overlap(candidate, accepted)
+            if overlap is not None:
+                if candidate.task.priority < overlap.task.priority:
+                    overlap.mark_skipped()   # incoming wins
+                else:
+                    candidate.mark_skipped() # existing wins
+            accepted.append(candidate)
 
-            conflict = self._find_overlap(candidate, accepted)
-            if conflict is None:
-                accepted.append(candidate)
-            elif candidate.task.priority < conflict.task.priority:
-                # Incoming task wins — bump the existing one
-                conflict.mark_skipped()
-                accepted.append(candidate)
-            else:
-                candidate.mark_skipped()
-                accepted.append(candidate)
-
-        return accepted
+        return accepted + already_skipped
 
     def _find_overlap(
         self, candidate: ScheduleItem, scheduled: List[ScheduleItem]
@@ -250,7 +365,8 @@ class Scheduler:
         for existing in scheduled:
             if existing.status == ScheduleStatus.SKIPPED:
                 continue
-            if c_start < _to_minutes(existing.end_time) and \
-               _to_minutes(existing.start_time) < c_end:
+            if _to_minutes(existing.start_time) >= c_end:
+                break  # accepted is start-time sorted; nothing later can overlap
+            if c_start < _to_minutes(existing.end_time):
                 return existing
         return None
