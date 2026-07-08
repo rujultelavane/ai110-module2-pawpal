@@ -1,46 +1,6 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
-
-## Scenario
-
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
-
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
-
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
-
-## What you will build
-
-Your final app should:
-
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
-
-## Getting started
-
-### Setup
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### Suggested workflow
-
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+This is **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
 
 ## 🖥️ Sample Output
 
@@ -92,15 +52,89 @@ Sample test output:
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+### UI Features
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+The Streamlit app is organized into four vertical sections:
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+| Section | What a user can do |
+|---|---|
+| **Owner** | Enter a name and email, then click Save to persist them for the session |
+| **Add a Pet** | Choose a species, enter age and optional notes; the pet appears in a live list below |
+| **Add a Task** | Pick a pet, set a title, duration, and priority (High/Medium/Low); optionally pin the task to a preferred time window or mark it as a daily recurring task |
+| **Generate Schedule** | Click **Generate schedule** to build today's plan; click **Resolve conflicts** to automatically drop lower-priority overlaps; use the pet and status dropdowns to filter the displayed results |
+
+---
+
+### Example Workflow
+
+1. **Create the owner** — enter name and email, click *Save owner info*.
+2. **Add pets** — add Buddy (Dog, age 3) and Whiskers (Cat, age 5, special notes: "Sensitive stomach").
+3. **Add tasks** — for Buddy: *Morning walk* (30 min, High priority, 7–9 AM, daily recurring); for Whiskers: *Feed Whiskers* (10 min, High priority, 8–9 AM, daily recurring). Add a few lower-priority tasks with no preferred window.
+4. **Generate the schedule** — click *Generate schedule*. The app calls `Scheduler.generate_daily_plan()`, which sorts windowed tasks before open tasks and packs them into the morning, lunch, and evening blocks chronologically.
+5. **Read the conflict banner** — if any tasks overlap, each pair surfaces as a yellow `st.warning` with a plain-English description. A green `st.success` confirms a clean plan.
+6. **Filter the results** — select *Buddy* in the pet dropdown to see only his tasks; select *Pending* to hide anything already completed.
+7. **Resolve conflicts** — if warnings appeared, click *Resolve conflicts*. `Scheduler.resolve_conflicts()` marks lower-priority items *Skipped* and re-renders the table with `⏭️ skipped` rows. A caption at the bottom counts how many were dropped.
+
+---
+
+### Key Scheduler Behaviors
+
+- **Priority-aware sorting** — `generate_daily_plan()` schedules tasks that have a `preferred_window` before open tasks, then breaks ties by priority number (1 = highest). Tasks added in any order come out chronologically.
+- **Preferred-window enforcement** — a task's slot is clamped to the intersection of its preferred window and the available block. A task whose window falls entirely outside available hours is silently dropped rather than placed at the wrong time.
+- **Conflict detection** — `detect_conflicts()` and `warn_on_conflicts()` check every non-skipped pair for time overlap, covering both same-pet and cross-pet collisions. `warn_on_conflicts` never raises — malformed items produce a safe warning string instead of crashing the UI.
+- **Conflict resolution** — `resolve_conflicts()` keeps the higher-priority item and marks the loser `SKIPPED`. Pre-skipped items are preserved and appended unchanged.
+- **Recurring task requeue** — `complete_item()` marks a schedule item complete and, for daily/weekly tasks, calls `next_occurrence()` to register a fresh copy with the pet automatically.
+
+---
+
+### Sample CLI Output (`python3 main.py`)
+
+```
+================================================
+  1. Full schedule — sorted by start time
+================================================
+  07:00 AM → 07:30 AM  Morning walk (Buddy)  [P1] [pending]
+  08:00 AM → 08:10 AM  Feed Whiskers (small meal) (Whiskers)  [P1] [pending]
+  08:10 AM → 08:20 AM  Feed Buddy (Buddy)  [P2] [pending]
+  08:20 AM → 08:40 AM  Playtime with Whiskers (Whiskers)  [P3] [pending]
+  05:00 PM → 05:45 PM  Evening walk (Buddy)  [P2] [pending]
+
+================================================
+  2. Completing tasks via complete_item()
+================================================
+  DONE  Morning walk (Buddy)  [daily]  → next occurrence queued as [t10]
+  DONE  Feed Whiskers (small meal) (Whiskers)  [daily]  → next occurrence queued as [t11]
+  DONE  Feed Buddy (Buddy)  [one-off]  → no next occurrence (one-off task)
+  DONE  Playtime with Whiskers (Whiskers)  [one-off]  → no next occurrence (one-off task)
+  DONE  Evening walk (Buddy)  [weekly]  → next occurrence queued as [t12]
+
+================================================
+  3. Filter: COMPLETE tasks only
+================================================
+  07:00 AM → 07:30 AM  Morning walk (Buddy)  [P1] [complete]
+  08:00 AM → 08:10 AM  Feed Whiskers (small meal) (Whiskers)  [P1] [complete]
+  08:10 AM → 08:20 AM  Feed Buddy (Buddy)  [P2] [complete]
+  08:20 AM → 08:40 AM  Playtime with Whiskers (Whiskers)  [P3] [complete]
+  05:00 PM → 05:45 PM  Evening walk (Buddy)  [P2] [complete]
+
+================================================
+  5. warn_on_conflicts on the generated plan
+================================================
+  No conflicts — scheduler placed all tasks without overlap.
+
+================================================
+  6. Two tasks at the same time — conflict warnings expected
+================================================
+  Schedule submitted:
+    07:00 AM → 07:30 AM  Morning walk (Buddy)
+    07:00 AM → 07:30 AM  Brush Buddy (Buddy)
+    07:15 AM → 07:45 AM  Feed Whiskers (Whiskers)
+    08:00 AM → 08:10 AM  Whiskers nap check (Whiskers)
+
+  WARNING (same pet): 'Morning walk' and 'Brush Buddy' overlap
+  WARNING (different pets): 'Morning walk' and 'Feed Whiskers' overlap
+  WARNING (different pets): 'Brush Buddy' and 'Feed Whiskers' overlap
+```
 
 ## Testing PawPal+
 The command to run tests is `python -m pytest`.

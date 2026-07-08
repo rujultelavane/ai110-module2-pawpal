@@ -1,0 +1,109 @@
+classDiagram
+    %% ── Enumeration ─────────────────────────────────────────────────────────
+    class ScheduleStatus {
+        <<enumeration>>
+        PENDING
+        COMPLETE
+        SKIPPED
+    }
+
+    %% ── Value types ─────────────────────────────────────────────────────────
+    class TimeWindow {
+        +time start
+        +time end
+        +duration_minutes() int
+        +overlaps(other: TimeWindow) bool
+    }
+
+    %% ── Domain classes ───────────────────────────────────────────────────────
+    class Owner {
+        +String id
+        +String name
+        +String email
+        +List~Pet~ pets
+        +add_pet(pet: Pet) void
+        +remove_pet(pet_id: String) void
+        +get_all_tasks() List~Task~
+        +get_tasks_by_pet(pet_name: String) List~Task~
+    }
+
+    class Pet {
+        +String id
+        +String name
+        +String species
+        +int age
+        +String special_notes
+        +List~Task~ tasks
+        +update_profile(name, species, age, special_notes) void
+        +add_task(task: Task) void
+        +remove_task(task_id: String) void
+    }
+
+    class Task {
+        +String id
+        +String pet_id
+        +String title
+        +int duration_minutes
+        +int priority
+        +TimeWindow preferred_window
+        +bool is_recurring
+        +String recurrence
+        +Pet pet
+        +update_task_details(title, duration_minutes, priority, preferred_window, is_recurring, recurrence) void
+        +next_occurrence(new_id: String) Task
+    }
+
+    class ScheduleItem {
+        +Task task
+        +time start_time
+        +time end_time
+        +ScheduleStatus status
+        +mark_complete() void
+        +mark_skipped() void
+    }
+
+    class Conflict {
+        +ScheduleItem item_a
+        +ScheduleItem item_b
+        +bool same_pet
+        +describe() String
+    }
+
+    %% ── Scheduler ────────────────────────────────────────────────────────────
+    class Scheduler {
+        +Owner owner
+        +List~TimeWindow~ available_hours
+        +generate_daily_plan(tasks: List~Task~) List~ScheduleItem~
+        +filter_schedule(items, status, pet_name) List~ScheduleItem~
+        +detect_conflicts(items: List~ScheduleItem~) List~Conflict~
+        +warn_on_conflicts(items: List~ScheduleItem~) List~String~
+        +resolve_conflicts(items: List~ScheduleItem~) List~ScheduleItem~
+        +complete_item(item: ScheduleItem, new_task_id: String) Task
+    }
+
+    %% ── Ownership / composition ───────────────────────────────────────────────
+    Owner "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" Task : has
+
+    %% ── Lazy back-reference set at scheduling time ───────────────────────────
+    Task "0..*" ..> "0..1" Pet : pet (set lazily)
+
+    %% ── TimeWindow used by both Task and Scheduler ───────────────────────────
+    Task "0..*" o-- "0..1" TimeWindow : preferred_window
+    Scheduler "1" o-- "1..*" TimeWindow : available_hours
+
+    %% ── Scheduler associations ───────────────────────────────────────────────
+    Scheduler "1" --> "1" Owner : schedules for
+    Scheduler ..> ScheduleItem : «creates»
+    Scheduler ..> Conflict : «creates»
+
+    %% ── ScheduleItem internals ───────────────────────────────────────────────
+    ScheduleItem "1" *-- "1" Task : wraps
+    ScheduleItem "1" --> "1" ScheduleStatus : status
+
+    %% ── Conflict is an association class over two ScheduleItems ──────────────
+    Conflict "1" --> "1" ScheduleItem : item_a
+    Conflict "1" --> "1" ScheduleItem : item_b
+
+    %% ── Task self-reference via next_occurrence() ────────────────────────────
+    Task ..> Task : «creates» next_occurrence()

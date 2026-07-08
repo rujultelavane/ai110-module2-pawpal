@@ -5,38 +5,7 @@ from pawpal_system import Conflict, Owner, Pet, Task, TimeWindow, Scheduler, Sch
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
-
-st.markdown(
-    """
-Welcome to the PawPal+ starter app.
-
-This file is intentionally thin. It gives you a working Streamlit app so you can start quickly,
-but **it does not implement the project logic**. Your job is to design the system and build it.
-
-Use this app as your interactive demo once your backend classes/functions exist.
-"""
-)
-
-with st.expander("Scenario", expanded=True):
-    st.markdown(
-        """
-**PawPal+** is a pet care planning assistant. It helps a pet owner plan care tasks
-for their pet(s) based on constraints like time, priority, and preferences.
-
-You will design and implement the scheduling logic and connect it to this Streamlit UI.
-"""
-    )
-
-with st.expander("What you need to build", expanded=True):
-    st.markdown(
-        """
-At minimum, your system should:
-- Represent pet care tasks (what needs to happen, how long it takes, priority)
-- Represent the pet and the owner (basic info and preferences)
-- Build a plan/schedule for a day that chooses and orders tasks based on constraints
-- Explain the plan (why each task was chosen and when it happens)
-"""
-    )
+st.caption("Priority-aware daily scheduling for your pets.")
 
 st.divider()
 
@@ -50,6 +19,10 @@ if "next_pet_id" not in st.session_state:
     st.session_state.next_pet_id = 1
 if "next_task_id" not in st.session_state:
     st.session_state.next_task_id = 1
+if "plan" not in st.session_state:
+    st.session_state.plan = []
+if "scheduler" not in st.session_state:
+    st.session_state.scheduler = None
 
 owner: Owner = st.session_state.owner
 
@@ -188,32 +161,102 @@ st.divider()
 
 st.subheader("Generate Today's Schedule")
 
+AVAILABLE_HOURS = [
+    TimeWindow(time(7, 0), time(10, 0)),
+    TimeWindow(time(12, 0), time(13, 0)),
+    TimeWindow(time(17, 0), time(19, 30)),
+]
+
 if not owner.pets or not owner.get_all_tasks():
     st.info("Add at least one pet and one task before generating a schedule.")
 else:
-    available_hours = [
-        TimeWindow(time(7, 0), time(10, 0)),
-        TimeWindow(time(12, 0), time(13, 0)),
-        TimeWindow(time(17, 0), time(19, 30)),
-    ]
-    st.write("**Available time blocks:** morning 7–10 AM · lunch 12–1 PM · evening 5–7:30 PM")
+    st.caption("Available blocks: morning 7–10 AM · lunch 12–1 PM · evening 5–7:30 PM")
 
-    if st.button("Generate schedule"):
-        scheduler = Scheduler(owner=owner, available_hours=available_hours)
-        plan = scheduler.generate_daily_plan()
+    col_gen, col_resolve = st.columns(2)
 
-        if not plan:
-            st.warning("No tasks fit into the available time blocks.")
+    with col_gen:
+        if st.button("Generate schedule", use_container_width=True):
+            sched = Scheduler(owner=owner, available_hours=AVAILABLE_HOURS)
+            st.session_state.scheduler = sched
+            st.session_state.plan = sched.generate_daily_plan()
+
+    with col_resolve:
+        resolve_disabled = not st.session_state.plan
+        if st.button("Resolve conflicts", disabled=resolve_disabled,
+                     use_container_width=True):
+            sched = st.session_state.scheduler
+            if sched:
+                st.session_state.plan = sched.resolve_conflicts(
+                    st.session_state.plan
+                )
+
+    plan: list = st.session_state.plan
+    sched: Scheduler | None = st.session_state.scheduler
+
+    if plan:
+        # ── conflict warnings ────────────────────────────────────────────
+        warnings = sched.warn_on_conflicts(plan) if sched else []
+        if warnings:
+            for msg in warnings:
+                st.warning(msg, icon="⚠️")
         else:
-            st.success(f"Scheduled {len(plan)} task(s)")
+            st.success(
+                f"{len(plan)} task(s) scheduled with no conflicts.", icon="✅"
+            )
+
+        st.divider()
+
+        # ── filter controls ──────────────────────────────────────────────
+        st.markdown("**Filter schedule**")
+        fcol1, fcol2 = st.columns(2)
+        with fcol1:
+            pet_options = ["All pets"] + [p.name for p in owner.pets]
+            filter_pet = st.selectbox("By pet", pet_options, key="filter_pet")
+        with fcol2:
+            status_options = {
+                "All statuses": None,
+                "Pending": ScheduleStatus.PENDING,
+                "Complete": ScheduleStatus.COMPLETE,
+                "Skipped": ScheduleStatus.SKIPPED,
+            }
+            filter_status_label = st.selectbox(
+                "By status", list(status_options.keys()), key="filter_status"
+            )
+
+        filtered = sched.filter_schedule(
+            plan,
+            status=status_options[filter_status_label],
+            pet_name=None if filter_pet == "All pets" else filter_pet,
+        ) if sched else plan
+
+        # ── schedule table ───────────────────────────────────────────────
+        STATUS_ICON = {
+            ScheduleStatus.PENDING: "🕐",
+            ScheduleStatus.COMPLETE: "✅",
+            ScheduleStatus.SKIPPED: "⏭️",
+        }
+
+        if not filtered:
+            st.info("No items match the current filters.")
+        else:
             rows = []
-            for item in sorted(plan, key=lambda s: s.start_time):
+            for item in filtered:
                 rows.append({
-                    "Start": item.start_time.strftime("%I:%M %p"),
-                    "End": item.end_time.strftime("%I:%M %p"),
+                    "Time": (
+                        f"{item.start_time.strftime('%I:%M %p')} – "
+                        f"{item.end_time.strftime('%I:%M %p')}"
+                    ),
                     "Task": item.task.title,
                     "Pet": item.task.pet.name if item.task.pet else item.task.pet_id,
-                    "Priority": item.task.priority,
-                    "Status": item.status.value,
+                    "Priority": f"{'★' * (4 - item.task.priority)}{'☆' * (item.task.priority - 1)}",
+                    "Recurring": "↻" if item.task.is_recurring else "–",
+                    "Status": f"{STATUS_ICON.get(item.status, '')} {item.status.value}",
                 })
             st.table(rows)
+
+            skipped = [r for r in rows if "⏭️" in r["Status"]]
+            if skipped:
+                st.caption(
+                    f"{len(skipped)} task(s) skipped due to conflicts. "
+                    "Click **Resolve conflicts** to automatically drop lower-priority overlaps."
+                )
